@@ -1,0 +1,234 @@
+def branch = "master"
+def version = ""
+def branchFlag = ""
+
+try {
+    if ("null" != "${gitlabBranch}") {
+        branch = "${gitlabBranch}"
+    }
+} catch (MissingPropertyException e) {
+
+}
+
+if ("null" == "${currentBuild?.description}") {
+    //手动触发
+    def appInfo = [:]
+    appInfo = input message: "请输入", parameters: [string(defaultValue: '', description: '版本号(如：v2.6)', name: 'versionValue'), string(defaultValue: branch, description: '分支名称', name: 'gitbranch')]
+    if (!appInfo['versionValue']?.trim()) {
+        error("请输入有效的应用版本信息!")
+    }
+
+    branch = "${appInfo['gitbranch']}"
+    version = "${appInfo['versionValue']}"
+}
+
+if ("develop" == "${branch}") {
+    version = "v_dev.${BUILD_NUMBER}"
+    branchFlag = "-dev"
+} else if ("master" == "${branch}") {
+    if ("" == "${version}") {
+        version = "v_master.${BUILD_NUMBER}"
+    }
+} else {
+    version = "v_rel.${BUILD_NUMBER}"
+    branchFlag = "-rel"
+}
+
+echo "message1 branch: ${branch}"
+echo "message2 version: ${version}"
+
+def pushImageNameApi = "repository.gridsum.com:8444/rd6/jiangxi_demo.api:${version}"
+def pullImageNameApi = "repository.gridsum.com:8443/rd6/jiangxi_demo.api:${version}"
+def pushImageNameUi = "repository.gridsum.com:8444/rd6/jiangxi_demo.ui:${version}"
+def pullImageNameUi = "repository.gridsum.com:8443/rd6/jiangxi_demo.ui:${version}"
+def pushImageNameEtl = "repository.gridsum.com:8444/rd6/jiangxi_demo.etl:${version}"
+def pullImageNameEtl = "repository.gridsum.com:8443/rd6/jiangxi_demo.etl:${version}"
+
+stage('Stage') {
+    parallel 'java' : {
+        node ("3_JDK_8") {
+            stage ('Checking out cd files') {
+                git url: "git@gitlab.gridsum.com:gov_law_tech/jiangxi_demo.git", branch: "${branch}", credentialsId: "c7f5e44c-b1ae-4ebf-979b-976fa210a920"
+            }
+            stage("Building Source Code") {
+                sh "cd api/jiangxi_demo && mvn clean package -DskipTests"
+                sh "ls -hl api/jiangxi_demo/target"
+                sh "cp api/jiangxi_demo/target/jiangxi_demo*.jar ci/docker_image_api/jiangxi_demo.jar"
+            }
+            stage("Bulding Docker Image") {
+                sh "docker build -f ci/docker_image_api/Dockerfile -t ${pushImageNameApi} ci/docker_image_api"
+            }
+            stage("Pushing Docker Image") {
+                sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS} ${GRIDSUM_DOCKER_REGISTRY}"
+                sh "docker push ${pushImageNameApi}"
+            }
+            stage("Cleaning Local Image") {
+                sh "docker rmi -f ${pushImageNameApi}"
+            }
+        }
+    }, 'nodejs': {
+        node ("node_6.9.1") {
+            stage ('Checking out cd files') {
+                git url: "git@gitlab.gridsum.com:gov_law_tech/jiangxi_demo.git", branch: "${branch}", credentialsId: "c7f5e44c-b1ae-4ebf-979b-976fa210a920"
+            }
+            stage ('Update JS Config File') {
+                sh "cat web/src/config.js"
+                sh "cat smartPaper/app/globalUrl.js"
+                sh "echo \"var globalConfig = {'webApiUrl': '/api','smartPaperUrl': '/smart/#/documentCreate'};\" > web/src/config.js"
+                sh "echo \"var globalUrl = {api: 'http://wshshch.gridsumdissector.com/v2/api/Api2.x/',pushUrl: '../web/'};\" > smartPaper/app/globalUrl.js"
+                sh "cat web/src/config.js"
+                sh "cat smartPaper/app/globalUrl.js"
+            }
+            stage ('Building Source Code') {
+                dir ('web') {
+                    sh "npm install --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "npm install gulp -g --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "npm install bower -g --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "bower install  --allow-root"
+                    sh "gulp dist"
+                }
+                sh "cp -r web/build ci/docker_image_ui/jx_demo/web"
+                dir ('smartPaper') {
+                    sh "npm install --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "npm install gulp -g --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "npm install bower -g --registry https://repository.gridsum.com/repository/npm-public/"
+                    sh "bower install  --allow-root"
+                    sh "gulp dist"
+                }
+                sh "cp -r smartPaper/dist ci/docker_image_ui/jx_demo/smart"
+            }
+            stage("Bulding Docker Image") {
+                sh "docker build -f ci/docker_image_ui/Dockerfile -t ${pushImageNameUi} ci/docker_image_ui"
+            }
+            stage("Pushing Docker Image") {
+                sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS} ${GRIDSUM_DOCKER_REGISTRY}"
+                sh "docker push ${pushImageNameUi}"
+            }
+            stage("Cleaning Local Image") {
+                sh "docker rmi -f ${pushImageNameUi}"
+            }
+        }
+    }, 'python': {
+        node ("python_3.5") {
+            stage ('Checking out cd files') {
+                git url: "git@gitlab.gridsum.com:gov_law_tech/jiangxi_demo.git", branch: "${branch}", credentialsId: "c7f5e44c-b1ae-4ebf-979b-976fa210a920"
+            }
+            stage ('Building Source Code') {
+                sh "mkdir -p ci/docker_image_etl/etl/xmls/bak"
+                sh "cp -r etl/src ci/docker_image_etl/etl/src"
+                sh "cp -r etl/resource ci/docker_image_etl/etl/resource"
+            }
+            stage("Bulding Docker Image") {
+                sh "docker build -f ci/docker_image_etl/Dockerfile -t ${pushImageNameEtl} ci/docker_image_etl"
+            }
+            stage("Pushing Docker Image") {
+                sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS} ${GRIDSUM_DOCKER_REGISTRY}"
+                sh "docker push ${pushImageNameEtl}"
+            }
+            stage("Cleaning Local Image") {
+                sh "docker rmi -f ${pushImageNameEtl}"
+            }
+        }
+    }
+
+    node ("python_3.5") {
+        def rancherComposeFile = ""
+        def apiRcFile = ""
+        def uiRcFile = ""
+        def etlRcFile = ""
+
+        def readmeFile = ""
+        def apiSvcFile = ""
+        def uiSvcFile = ""
+        def etlSvcFile = ""
+        def etcdClientFile = ""
+        def etcd0RcFile = ""
+        def etcd1RcFile = ""
+        def etcd2RcFile = ""
+        def etcd0SvcFile = ""
+        def etcd1SvcFile = ""
+        def etcd2SvcFile = ""
+        stage ('Checking out cd files') {
+            git url: "git@gitlab.gridsum.com:gov_law_tech/jiangxi_demo.git", branch: "${branch}", credentialsId: "c7f5e44c-b1ae-4ebf-979b-976fa210a920"
+            rancherComposeFile = readFile file: "ci/rancher-compose.yml", encoding: "UTF-8"
+            apiRcFile = readFile file:"ci/api-master-RC.yaml", encoding: "UTF-8"
+            uiRcFile = readFile file:"ci/ui-master-RC.yaml", encoding: "UTF-8"
+            etlRcFile = readFile file:"ci/etl-master-RC.yaml", encoding: "UTF-8"
+
+            rancherComposeFile = rancherComposeFile.replace("[VERSION]", "${version}")
+            rancherComposeFile = rancherComposeFile.replace("[BRANCH_FLAG]", "${branchFlag}")
+            apiRcFile = apiRcFile.replace("[IMAGE]", "${pullImageNameApi}")
+            uiRcFile = uiRcFile.replace("[IMAGE]", "${pullImageNameUi}")
+            etlRcFile = etlRcFile.replace("[IMAGE]", "${pullImageNameEtl}")
+
+            readmeFile = readFile file:"ci/README.md", encoding: "UTF-8"
+            apiSvcFile = readFile file:"ci/api-master-SVC.yaml", encoding: "UTF-8"
+            uiSvcFile = readFile file:"ci/ui-master-SVC.yaml", encoding: "UTF-8"
+            etlSvcFile = readFile file:"ci/etl-master-SVC.yaml", encoding: "UTF-8"
+            etcdClientFile = readFile file:"ci/etcd-client-SVC-.yaml", encoding: "UTF-8"
+            etcd0RcFile = readFile file:"ci/etcd0-RC.yaml", encoding: "UTF-8"
+            etcd1RcFile = readFile file:"ci/etcd1-RC.yaml", encoding: "UTF-8"
+            etcd2RcFile = readFile file:"ci/etcd2-RC.yaml", encoding: "UTF-8"
+            etcd0SvcFile = readFile file:"ci/etcd0-SVC.yaml", encoding: "UTF-8"
+            etcd1SvcFile = readFile file:"ci/etcd1-SVC.yaml", encoding: "UTF-8"
+            etcd2SvcFile = readFile file:"ci/etcd2-SVC.yaml", encoding: "UTF-8"
+        }
+        stage ('Packaging Application') {
+            git url:"git@gitlab.gridsum.com:mediadissector/app-market-ld.git", branch: "master", credentialsId:'c7f5e44c-b1ae-4ebf-979b-976fa210a920'
+            sshagent (credentials: ['c7f5e44c-b1ae-4ebf-979b-976fa210a920']) {
+                sh "git config --global user.email ${GIT_USER_EMAIL}"
+                sh "git config --global user.name ${GIT_USER_NAME}"
+
+                sh "git checkout master"
+                dir ("kubernetes-templates/jiangxi_demo/${version}") {
+                    writeFile file:"rancher-compose.yml", text:"${rancherComposeFile}", encoding:"UTF-8"
+                    sh "git add rancher-compose.yml"
+
+                    writeFile file:"api-master-RC.yaml", text:"${apiRcFile}", encoding:"UTF-8"
+                    sh "git add api-master-RC.yaml"
+
+                    writeFile file:"ui-master-RC.yaml", text:"${uiRcFile}", encoding:"UTF-8"
+                    sh "git add ui-master-RC.yaml"
+
+                    writeFile file:"etl-master-RC.yaml", text:"${etlRcFile}", encoding:"UTF-8"
+                    sh "git add etl-master-RC.yaml"
+
+                    writeFile file:"README.md", text:"${readmeFile}", encoding:"UTF-8"
+                    sh "git add README.md"
+
+                    writeFile file:"api-master-SVC.yaml", text:"${apiSvcFile}", encoding:"UTF-8"
+                    sh "git add api-master-SVC.yaml"
+
+                    writeFile file:"ui-master-SVC.yaml", text:"${uiSvcFile}", encoding:"UTF-8"
+                    sh "git add ui-master-SVC.yaml"
+
+                    writeFile file:"etl-master-SVC.yaml", text:"${etlSvcFile}", encoding:"UTF-8"
+                    sh "git add etl-master-SVC.yaml"
+
+                    writeFile file:"etcd-client-SVC-.yaml", text:"${etcdClientFile}", encoding:"UTF-8"
+                    sh "git add etcd-client-SVC-.yaml"
+
+                    writeFile file:"etcd0-RC.yaml", text:"${etcd0RcFile}", encoding:"UTF-8"
+                    sh "git add etcd0-RC.yaml"
+
+                    writeFile file:"etcd1-RC.yaml", text:"${etcd1RcFile}", encoding:"UTF-8"
+                    sh "git add etcd1-RC.yaml"
+
+                    writeFile file:"etcd2-RC.yaml", text:"${etcd2RcFile}", encoding:"UTF-8"
+                    sh "git add etcd2-RC.yaml"
+
+                    writeFile file:"etcd0-SRC.yaml", text:"${etcd0SvcFile}", encoding:"UTF-8"
+                    sh "git add etcd0-SRC.yaml"
+
+                    writeFile file:"etcd1-SRC.yaml", text:"${etcd1SvcFile}", encoding:"UTF-8"
+                    sh "git add etcd1-SRC.yaml"
+
+                    writeFile file:"etcd2-SRC.yaml", text:"${etcd2SvcFile}", encoding:"UTF-8"
+                    sh "git add etcd2-SRC.yaml"
+                }
+                sh "git commit -m jiangxi_demo-${version}"
+                sh "git push git@gitlab.gridsum.com:mediadissector/app-market-ld.git master"
+            }
+        }
+    }
+}
