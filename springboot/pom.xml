@@ -69,13 +69,13 @@
 		</plugins>
 	</build>
 
-	<repositories>
+	<!--<repositories>
 		<repository>
 			<id>gridsum</id>
 			<name>girdsum maven</name>
 			<url>http://repository.gridsum.com/repository/maven-public/</url>
 		</repository>
-	</repositories>
+	</repositories>-->
 
 
 </project>
