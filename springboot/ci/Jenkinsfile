@@ -1,7 +1,9 @@
 node (){
-stage ‘Build and Test’
-env.PATH = “${tool ‘M3’}/bin:${env.PATH}”
-//checkout scm
-git url:”https://github.com/ciandcd/simple-maven-project-with-tests.git”
-sh ‘mvn clean package’
+	stage('check out source file'){
+		checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [[$class: 'CleanCheckout']], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '29c5acc6-157e-4c98-9e62-12477be1591e', url: 'git@github.com:StevenCur30/JenkinsTest.git']]])
+	}
+	stage("build source file"){
+		sh "mvn clean package -DskipTests"
+		sh "ls -hl target"
+	}
 }
